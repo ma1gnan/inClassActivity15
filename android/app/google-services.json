@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "278719046338",
+    "project_id": "science-signal-cloud",
+    "storage_bucket": "science-signal-cloud.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:278719046338:android:1437ce35ca5362182c915b",
+        "android_client_info": {
+          "package_name": "com.example.science_quiz"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOtyb_bCjge7jUyO1hWMDsrOVol-wWZ9o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

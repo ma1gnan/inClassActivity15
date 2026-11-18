@@ -1,10 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'screens/auth_gate.dart';
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'services/attempt_service.dart';
+import 'firebase_options.dart';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-void main() => runApp(const ScienceSignalApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  runApp(const ScienceSignalApp());
+}
 
 class ScienceSignalApp extends StatelessWidget {
   const ScienceSignalApp({super.key});
@@ -14,7 +27,11 @@ class ScienceSignalApp extends StatelessWidget {
     title: 'Science Signal',
     debugShowCheckedModeBanner: false,
     theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
-    home: const ScienceQuizScreen(),
+    home: AuthGate(
+      signedInBuilder: (User user) {
+        return ScienceQuizScreen(key: ValueKey(user.uid));
+      },
+    ),
   );
 }
 
@@ -74,8 +91,22 @@ class _ScienceQuizScreenState extends State<ScienceQuizScreen> {
   String? _selectedAnswer;
   bool _quizFinished = false;
   bool _submitting = false;
-  bool _simulatedSubmissionComplete = false;
+
   int _requestVersion = 0;
+  String? _roundId;
+  String? _roundUid;
+  bool _verifying = false;
+  bool _cloudVerified = false;
+  String? _cloudMessage;
+
+  String _createRoundId() {
+    return FirebaseFirestore.instance
+        .collection('users')
+        .doc(FirebaseAuth.instance.currentUser!.uid)
+        .collection('attempts')
+        .doc()
+        .id;
+  }
 
   @override
   void initState() {
@@ -95,7 +126,6 @@ class _ScienceQuizScreenState extends State<ScienceQuizScreen> {
       _selectedAnswer = null;
       _quizFinished = false;
       _submitting = false;
-      _simulatedSubmissionComplete = false;
     });
 
     try {
@@ -178,26 +208,97 @@ class _ScienceQuizScreenState extends State<ScienceQuizScreen> {
     'category': 'Science & Nature',
   };
 
-  Future<void> _simulateSubmission() async {
-    if (!_quizFinished || _submitting || _simulatedSubmissionComplete) return;
-    setState(() => _submitting = true);
+  Future<void> _submitScore() async {
+    if (!_quizFinished ||
+        _submitting ||
+        _verifying ||
+        _cloudVerified ||
+        _roundId != null ||
+        _roundUid != null) {
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() => _cloudMessage = 'Please sign in again.');
+      return;
+    }
+
+    final uid = user.uid;
+    final roundId = _createRoundId();
+    final correctCount = _score;
+    final service = AttemptService();
+
+    setState(() {
+      _roundId = roundId;
+      _roundUid = uid;
+      _submitting = true;
+      _cloudMessage = 'Saving quiz score to Firestore...';
+    });
+
     try {
-      await Future<void>.delayed(const Duration(seconds: 1));
-      if (!mounted) return;
+      await service.saveAttempt(
+        uid: uid,
+        roundId: roundId,
+        correctCount: correctCount,
+      );
+
+      if (!mounted || FirebaseAuth.instance.currentUser?.uid != uid) {
+        return;
+      }
+
       setState(() {
         _submitting = false;
-        _simulatedSubmissionComplete = true;
+        _verifying = true;
+        _cloudMessage = 'Write acknowledged. Verifying with server...';
       });
-    } catch (_) {
+
+      await service.verifyAttempt(
+        uid: uid,
+        roundId: roundId,
+        correctCount: correctCount,
+      );
+
+      if (!mounted || FirebaseAuth.instance.currentUser?.uid != uid) {
+        return;
+      }
+
+      setState(() {
+        _verifying = false;
+        _cloudVerified = true;
+        _cloudMessage = 'Cloud verified: quiz score saved successfully.';
+      });
+    } catch (error) {
       if (!mounted) return;
-      setState(() => _submitting = false);
+
+      setState(() {
+        _submitting = false;
+        _verifying = false;
+        _cloudMessage = 'Submission or verification needs attention: $error';
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Science Signal')),
+      appBar: AppBar(
+        title: const Text('Science Signal'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sign Out',
+            onPressed:
+                _submitting ||
+                    _verifying ||
+                    (_roundId != null && !_cloudVerified)
+                ? null
+                : () async {
+                    await FirebaseAuth.instance.signOut();
+                  },
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -357,37 +458,32 @@ class _ScienceQuizScreenState extends State<ScienceQuizScreen> {
         ],
         const SizedBox(height: 16),
         Text(
-          'Simulated score submission (no server request)',
+          'Cloud Firestore Score Submission',
           style: Theme.of(context).textTheme.titleMedium,
         ),
         const SizedBox(height: 8),
         SelectableText(payloadText),
         const SizedBox(height: 12),
         FilledButton(
-          onPressed: _submitting || _simulatedSubmissionComplete
+          onPressed:
+              _submitting || _verifying || _cloudVerified || _roundId != null
               ? null
-              : _simulateSubmission,
+              : _submitScore,
           child: Text(
             _submitting
-                ? 'Simulating submission...'
-                : _simulatedSubmissionComplete
-                ? 'Simulation Complete'
-                : 'Simulate Score Submission',
+                ? 'Saving...'
+                : _verifying
+                ? 'Verifying...'
+                : _cloudVerified
+                ? 'Cloud Verified'
+                : 'Submit Score to Cloud',
           ),
         ),
-        if (_simulatedSubmissionComplete) ...[
-          const SizedBox(height: 8),
-          const Text(
-            'Simulation complete. No score was sent to or saved by a server.',
-            textAlign: TextAlign.center,
+        if (_cloudMessage != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(_cloudMessage!),
           ),
-        ],
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: _submitting ? null : _loadQuestions,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Play Again (New Questions)'),
-        ),
       ],
     );
   }

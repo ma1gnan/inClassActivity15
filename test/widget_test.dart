@@ -1,12 +1,28 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:science_quiz/main.dart';
+import 'package:science_quiz/screens/auth_gate.dart';
 
 void main() {
-  testWidgets('Science Signal app launches', (WidgetTester tester) async {
-    await tester.pumpWidget(const ScienceSignalApp());
+  testWidgets('Science Signal authentication loading state', (
+    WidgetTester tester,
+  ) async {
+    final authController = StreamController<dynamic>.broadcast();
 
-    expect(find.text('Science Signal'), findsOneWidget);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AuthGate(
+          authStateStream: authController.stream.cast(),
+          signedInBuilder: (user) => const Scaffold(body: Text('Quiz loaded')),
+        ),
+      ),
+    );
+
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    await authController.close();
   });
 }
